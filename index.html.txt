@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>星際守護者 - 網頁射擊遊戲</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #111;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #game-wrapper {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        }
+        canvas {
+            display: block;
+            background: #000;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10;
+        }
+        .hidden {
+            display: none !important;
+        }
+        .hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 20px;
+            font-weight: bold;
+            z-index: 5;
+            pointer-events: none;
+        }
+        h1 { color: #0ff; font-size: 48px; margin-bottom: 10px; }
+        h2 { color: #ff0; }
+        button {
+            padding: 15px 30px;
+            font-size: 20px;
+            background-color: #0ff;
+            color: #000;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 20px;
+            transition: 0.2s;
+        }
+        button:hover { background-color: #fff; box-shadow: 0 0 15px #0ff; }
+        input {
+            padding: 10px;
+            font-size: 18px;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 60%;
+            margin-top: 20px;
+        }
+        th, td { border: 1px solid #444; padding: 10px; text-align: center; }
+        th { background-color: #333; color: #0ff; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <!-- 遊戲抬頭顯示器 -->
+    <div class="hud" id="hud" class="hidden">
+        <div>關卡: <span id="hud-level">1</span>/10</div>
+        <div>金錢: $<span id="hud-money">0</span> / $<span id="hud-target">100</span></div>
+        <div>時間: <span id="hud-time" style="color: #f55;">30</span>s</div>
+    </div>
+
+    <!-- 畫布 -->
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <!-- 主選單 -->
+    <div id="menu-screen" class="ui-layer">
+        <h1>星際守護者</h1>
+        <p>滑鼠移動控制方向，點擊左鍵射擊</p>
+        <p>在時間結束前，擊殺敵人賺取目標金額即可過關！</p>
+        <button onclick="startGame()">開始遊戲</button>
+        <button onclick="showLeaderboard()">排行榜</button>
+    </div>
+
+    <!-- 關卡過渡 -->
+    <div id="level-screen" class="ui-layer hidden">
+        <h1 id="level-title">任務完成！</h1>
+        <p id="level-desc">準備進入下一關...</p>
+        <button onclick="startNextLevel()">繼續</button>
+    </div>
+
+    <!-- 遊戲結束 / 勝利 -->
+    <div id="game-over-screen" class="ui-layer hidden">
+        <h1 id="end-title">遊戲結束</h1>
+        <h2>總共賺取: $<span id="final-score">0</span></h2>
+        <div id="name-input-area">
+            <p>請輸入你的名字記錄成績：</p>
+            <input type="text" id="player-name" maxlength="10" placeholder="你的名字">
+            <br>
+            <button onclick="saveScore()">儲存成績</button>
+        </div>
+        <button onclick="resetGame()" style="background-color: #555; color: white;">返回主選單</button>
+    </div>
+
+    <!-- 排行榜 -->
+    <div id="leaderboard-screen" class="ui-layer hidden">
+        <h1>前 10 名排行榜</h1>
+        <table id="leaderboard-table">
+            <tr><th>名次</th><th>玩家</th><th>總金錢</th></tr>
+            <!-- JavaScript 會填入資料 -->
+        </table>
+        <button onclick="hideLeaderboard()">返回</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // 遊戲狀態與變數
+    let gameState = 'menu'; // menu, playing, level_transition, game_over
+    let currentLevel = 0;
+    let money = 0;
+    let totalMoney = 0;
+    let timeRemaining = 30;
+    let timerInterval;
+    let animationId;
+
+    // 實體陣列
+    let bullets = [];
+    let enemies = [];
+    let particles = [];
+
+    // 玩家設定
+    const player = {
+        x: 400,
+        y: 550,
+        width: 40,
+        height: 40,
+        speed: 5,
+        color: '#0ff',
+        cooldown: 0
+    };
+
+    // 追蹤滑鼠
+    let mouseX = 400;
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+    });
+
+    // 點擊射擊
+    canvas.addEventListener('mousedown', () => {
+        if (gameState === 'playing' && player.cooldown <= 0) {
+            bullets.push({ x: player.x, y: player.y - 20, speed: 10, radius: 4, color: '#ff0' });
+            player.cooldown = 15; // 射速限制
+        }
+    });
+
+    // 關卡設定 (共10關)
+    const levelData = [];
+    for(let i=1; i<=10; i++) {
+        levelData.push({
+            targetMoney: i * 100,      // 每關目標金額增加
+            enemySpeed: 1 + (i * 0.3), // 敵人速度增加
+            spawnRate: Math.max(20, 100 - (i * 8)), // 生成頻率加快 (數字越小越快)
+            enemyHealth: 1 + Math.floor(i / 3),     // 敵人血量變厚
+            enemyReward: 10 + (i * 5)               // 敵人掉落金錢增加
+        });
+    }
+
+    let frameCount = 0;
+
+    // --- 核心更新邏輯 ---
+    function update() {
+        if (gameState !== 'playing') return;
+
+        // 玩家冷卻
+        if (player.cooldown > 0) player.cooldown--;
+        
+        // 玩家平滑移動到滑鼠位置
+        player.x += (mouseX - player.x) * 0.1;
+        // 邊界限制
+        if (player.x < 20) player.x = 20;
+        if (player.x > canvas.width - 20) player.x = canvas.width - 20;
+
+        // 更新子彈
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            bullets[i].y -= bullets[i].speed;
+            if (bullets[i].y < 0) bullets.splice(i, 1);
+        }
+
+        // 生成敵人
+        const currentLvlConfig = levelData[currentLevel];
+        frameCount++;
+        if (frameCount % currentLvlConfig.spawnRate === 0) {
+            enemies.push({
+                x: Math.random() * (canvas.width - 40) + 20,
+                y: -30,
+                radius: 15,
+                speed: currentLvlConfig.enemySpeed,
+                hp: currentLvlConfig.enemyHealth,
+                reward: currentLvlConfig.enemyReward,
+                color: `hsl(${Math.random() * 360}, 80%, 60%)`
+            });
+        }
+
+        // 更新敵人
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let e = enemies[i];
+            e.y += e.speed;
+
+            // 碰撞檢測 (子彈擊中敵人)
+            for (let j = bullets.length - 1; j >= 0; j--) {
+                let b = bullets[j];
+                let dist = Math.hypot(e.x - b.x, e.y - b.y);
+                if (dist < e.radius + b.radius) {
+                    e.hp--;
+                    bullets.splice(j, 1);
+                    createParticles(e.x, e.y, e.color);
+                    
+                    if (e.hp <= 0) {
+                        money += e.reward;
+                        totalMoney += e.reward;
+                        enemies.splice(i, 1);
+                        updateHUD();
+                        checkLevelProgress();
+                        break;
+                    }
+                }
+            }
+            
+            // 敵人碰到最底下 (扣時)
+            if (e && e.y > canvas.height + 20) {
+                timeRemaining = Math.max(0, timeRemaining - 2); 
+                enemies.splice(i, 1);
+                updateHUD();
+                
+                // 紅色閃爍提示
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        // 更新粒子
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.alpha -= 0.05;
+            if (p.alpha <= 0) particles.splice(i, 1);
+        }
+    }
+
+    // --- 渲染畫面 ---
+    function draw() {
+        // 清空背景
+        ctx.fillStyle = '#050510';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (gameState !== 'playing') return;
+
+        // 畫玩家 (飛船形狀)
+        ctx.fillStyle = player.color;
+        ctx.beginPath();
+        ctx.moveTo(player.x, player.y - 20);
+        ctx.lineTo(player.x - 20, player.y + 15);
+        ctx.lineTo(player.x + 20, player.y + 15);
+        ctx.fill();
+
+        // 畫子彈
+        for (let b of bullets) {
+            ctx.fillStyle = b.color;
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 畫敵人
+        for (let e of enemies) {
+            ctx.fillStyle = e.color;
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+            ctx.fill();
+            // 血量條
+            if (e.hp > 1) {
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(e.hp, e.x, e.y + 4);
+            }
+        }
+
+        // 畫粒子
+        for (let p of particles) {
+            ctx.globalAlpha = p.alpha;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    function gameLoop() {
+        if(gameState === 'playing') {
+            update();
+            draw();
+        }
+        animationId = requestAnimationFrame(gameLoop);
+    }
+
+    // --- 輔助功能 ---
+    function createParticles(x, y, color) {
+        for (let i = 0; i < 5; i++) {
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random() - 0.5) * 5,
+                vy: (Math.random() - 0.5) * 5,
+                radius: Math.random() * 3,
+                color: color,
+                alpha: 1
+            });
+        }
+    }
+
+    function checkLevelProgress() {
+        const target = levelData[currentLevel].targetMoney;
+        if (money >= target) {
+            levelComplete();
+        }
+    }
+
+    function updateHUD() {
+        document.getElementById('hud-level').innerText = currentLevel + 1;
+        document.getElementById('hud-money').innerText = money;
+        document.getElementById('hud-target').innerText = levelData[currentLevel].targetMoney;
+        document.getElementById('hud-time').innerText = timeRemaining;
+    }
+
+    // --- 遊戲流程控制 ---
+    function startGame() {
+        document.getElementById('menu-screen').classList.add('hidden');
+        document.getElementById('hud').classList.remove('hidden');
+        currentLevel = 0;
+        totalMoney = 0;
+        initLevel();
+        if(!animationId) gameLoop();
+    }
+
+    function initLevel() {
+        money = 0;
+        timeRemaining = 30;
+        bullets = [];
+        enemies = [];
+        particles = [];
+        frameCount = 0;
+        gameState = 'playing';
+        updateHUD();
+
+        clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            if (gameState === 'playing') {
+                timeRemaining--;
+                updateHUD();
+                if (timeRemaining <= 0) {
+                    gameOver("時間到！");
+                }
+            }
+        }, 1000);
+    }
+
+    function levelComplete() {
+        gameState = 'level_transition';
+        clearInterval(timerInterval);
+        
+        if (currentLevel >= 9) { // 10關完成
+            gameOver("你破關了！星系得救了！", true);
+        } else {
+            currentLevel++;
+            document.getElementById('level-title').innerText = "關卡完成！";
+            document.getElementById('level-desc').innerText = `準備進入第 ${currentLevel + 1} 關`;
+            document.getElementById('level-screen').classList.remove('hidden');
+        }
+    }
+
+    function startNextLevel() {
+        document.getElementById('level-screen').classList.add('hidden');
+        initLevel();
+    }
+
+    function gameOver(reason, victory = false) {
+        gameState = 'game_over';
+        clearInterval(timerInterval);
+        document.getElementById('hud').classList.add('hidden');
+        
+        const goScreen = document.getElementById('game-over-screen');
+        goScreen.classList.remove('hidden');
+        document.getElementById('end-title').innerText = reason;
+        document.getElementById('end-title').style.color = victory ? "#0f0" : "#f00";
+        document.getElementById('final-score').innerText = totalMoney;
+        document.getElementById('player-name').value = '';
+    }
+
+    function resetGame() {
+        document.getElementById('game-over-screen').classList.add('hidden');
+        document.getElementById('menu-screen').classList.remove('hidden');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // --- 排行榜功能 (Local Storage) ---
+    function saveScore() {
+        const nameInput = document.getElementById('player-name').value.trim();
+        const name = nameInput || '無名英雄';
+        
+        // 讀取舊紀錄
+        let scores = JSON.parse(localStorage.getItem('spaceShooterLeaderboard')) || [];
+        scores.push({ name: name, score: totalMoney });
+        
+        // 排序並取前10名
+        scores.sort((a, b) => b.score - a.score);
+        scores = scores.slice(0, 10);
+        
+        // 儲存
+        localStorage.setItem('spaceShooterLeaderboard', JSON.stringify(scores));
+        
+        document.getElementById('game-over-screen').classList.add('hidden');
+        showLeaderboard();
+    }
+
+    function showLeaderboard() {
+        document.getElementById('menu-screen').classList.add('hidden');
+        document.getElementById('leaderboard-screen').classList.remove('hidden');
+        
+        let scores = JSON.parse(localStorage.getItem('spaceShooterLeaderboard')) || [];
+        let tableHTML = '<tr><th>名次</th><th>玩家</th><th>總金錢</th></tr>';
+        
+        if (scores.length === 0) {
+            tableHTML += '<tr><td colspan="3">目前還沒有紀錄</td></tr>';
+        } else {
+            scores.forEach((entry, index) => {
+                tableHTML += `<tr><td>${index + 1}</td><td>${entry.name}</td><td>$${entry.score}</td></tr>`;
+            });
+        }
+        document.getElementById('leaderboard-table').innerHTML = tableHTML;
+    }
+
+    function hideLeaderboard() {
+        document.getElementById('leaderboard-screen').classList.add('hidden');
+        document.getElementById('menu-screen').classList.remove('hidden');
+    }
+</script>
+</body>
+</html>
