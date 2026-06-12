@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>星際守護者 - 網頁射擊遊戲</title>
+    <title>星際守護者 - 連發升級版</title>
     <style>
         body {
             margin: 0;
@@ -88,33 +88,28 @@
 <body>
 
 <div id="game-wrapper">
-    <!-- 遊戲抬頭顯示器 -->
     <div class="hud" id="hud" class="hidden">
         <div>關卡: <span id="hud-level">1</span>/10</div>
         <div>金錢: $<span id="hud-money">0</span> / $<span id="hud-target">100</span></div>
         <div>時間: <span id="hud-time" style="color: #f55;">30</span>s</div>
     </div>
 
-    <!-- 畫布 -->
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
-    <!-- 主選單 -->
     <div id="menu-screen" class="ui-layer">
         <h1>星際守護者</h1>
-        <p>滑鼠移動控制方向，點擊左鍵射擊</p>
+        <p>滑鼠移動控制方向，<b>按住</b>左鍵連續射擊</p>
         <p>在時間結束前，擊殺敵人賺取目標金額即可過關！</p>
         <button onclick="startGame()">開始遊戲</button>
         <button onclick="showLeaderboard()">排行榜</button>
     </div>
 
-    <!-- 關卡過渡 -->
     <div id="level-screen" class="ui-layer hidden">
         <h1 id="level-title">任務完成！</h1>
         <p id="level-desc">準備進入下一關...</p>
         <button onclick="startNextLevel()">繼續</button>
     </div>
 
-    <!-- 遊戲結束 / 勝利 -->
     <div id="game-over-screen" class="ui-layer hidden">
         <h1 id="end-title">遊戲結束</h1>
         <h2>總共賺取: $<span id="final-score">0</span></h2>
@@ -127,12 +122,10 @@
         <button onclick="resetGame()" style="background-color: #555; color: white;">返回主選單</button>
     </div>
 
-    <!-- 排行榜 -->
     <div id="leaderboard-screen" class="ui-layer hidden">
         <h1>前 10 名排行榜</h1>
         <table id="leaderboard-table">
             <tr><th>名次</th><th>玩家</th><th>總金錢</th></tr>
-            <!-- JavaScript 會填入資料 -->
         </table>
         <button onclick="hideLeaderboard()">返回</button>
     </div>
@@ -142,8 +135,7 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // 遊戲狀態與變數
-    let gameState = 'menu'; // menu, playing, level_transition, game_over
+    let gameState = 'menu'; 
     let currentLevel = 0;
     let money = 0;
     let totalMoney = 0;
@@ -151,12 +143,10 @@
     let timerInterval;
     let animationId;
 
-    // 實體陣列
     let bullets = [];
     let enemies = [];
     let particles = [];
 
-    // 玩家設定
     const player = {
         x: 400,
         y: 550,
@@ -167,55 +157,63 @@
         cooldown: 0
     };
 
-    // 追蹤滑鼠
+    // 新增：追蹤滑鼠是否按住
     let mouseX = 400;
+    let isShooting = false;
+
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
         mouseX = e.clientX - rect.left;
     });
 
-    // 點擊射擊
+    // 改寫：按住滑鼠時開啟射擊狀態
     canvas.addEventListener('mousedown', () => {
-        if (gameState === 'playing' && player.cooldown <= 0) {
-            bullets.push({ x: player.x, y: player.y - 20, speed: 10, radius: 4, color: '#ff0' });
-            player.cooldown = 15; // 射速限制
-        }
+        isShooting = true;
     });
 
-    // 關卡設定 (共10關)
+    // 改寫：放開滑鼠或滑鼠離開畫布時關閉射擊狀態
+    canvas.addEventListener('mouseup', () => {
+        isShooting = false;
+    });
+    canvas.addEventListener('mouseleave', () => {
+        isShooting = false;
+    });
+
     const levelData = [];
     for(let i=1; i<=10; i++) {
         levelData.push({
-            targetMoney: i * 100,      // 每關目標金額增加
-            enemySpeed: 1 + (i * 0.3), // 敵人速度增加
-            spawnRate: Math.max(20, 100 - (i * 8)), // 生成頻率加快 (數字越小越快)
-            enemyHealth: 1 + Math.floor(i / 3),     // 敵人血量變厚
-            enemyReward: 10 + (i * 5)               // 敵人掉落金錢增加
+            targetMoney: i * 100,
+            enemySpeed: 1 + (i * 0.3),
+            spawnRate: Math.max(15, 80 - (i * 6)), // 因應火力變強，敵人稍微變多一點
+            enemyHealth: 1 + Math.floor(i / 2),    // 敵人血量也稍微調厚一點
+            enemyReward: 10 + (i * 5)
         });
     }
 
     let frameCount = 0;
 
-    // --- 核心更新邏輯 ---
     function update() {
         if (gameState !== 'playing') return;
 
-        // 玩家冷卻
+        // 玩家冷卻計時
         if (player.cooldown > 0) player.cooldown--;
         
-        // 玩家平滑移動到滑鼠位置
         player.x += (mouseX - player.x) * 0.1;
-        // 邊界限制
         if (player.x < 20) player.x = 20;
         if (player.x > canvas.width - 20) player.x = canvas.width - 20;
 
-        // 更新子彈
+        // 新增：如果正在按住左鍵，且冷卻完畢，就發射子彈
+        if (isShooting && player.cooldown <= 0) {
+            bullets.push({ x: player.x, y: player.y - 20, speed: 12, radius: 4, color: '#ff0' });
+            // 將冷卻時間從原本的 15 大幅降低到 3，達成極速連發效果
+            player.cooldown = 3; 
+        }
+
         for (let i = bullets.length - 1; i >= 0; i--) {
             bullets[i].y -= bullets[i].speed;
             if (bullets[i].y < 0) bullets.splice(i, 1);
         }
 
-        // 生成敵人
         const currentLvlConfig = levelData[currentLevel];
         frameCount++;
         if (frameCount % currentLvlConfig.spawnRate === 0) {
@@ -230,12 +228,10 @@
             });
         }
 
-        // 更新敵人
         for (let i = enemies.length - 1; i >= 0; i--) {
             let e = enemies[i];
             e.y += e.speed;
 
-            // 碰撞檢測 (子彈擊中敵人)
             for (let j = bullets.length - 1; j >= 0; j--) {
                 let b = bullets[j];
                 let dist = Math.hypot(e.x - b.x, e.y - b.y);
@@ -255,19 +251,16 @@
                 }
             }
             
-            // 敵人碰到最底下 (扣時)
             if (e && e.y > canvas.height + 20) {
                 timeRemaining = Math.max(0, timeRemaining - 2); 
                 enemies.splice(i, 1);
                 updateHUD();
                 
-                // 紅色閃爍提示
                 ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
         }
 
-        // 更新粒子
         for (let i = particles.length - 1; i >= 0; i--) {
             let p = particles[i];
             p.x += p.vx;
@@ -277,15 +270,12 @@
         }
     }
 
-    // --- 渲染畫面 ---
     function draw() {
-        // 清空背景
         ctx.fillStyle = '#050510';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         if (gameState !== 'playing') return;
 
-        // 畫玩家 (飛船形狀)
         ctx.fillStyle = player.color;
         ctx.beginPath();
         ctx.moveTo(player.x, player.y - 20);
@@ -293,7 +283,6 @@
         ctx.lineTo(player.x + 20, player.y + 15);
         ctx.fill();
 
-        // 畫子彈
         for (let b of bullets) {
             ctx.fillStyle = b.color;
             ctx.beginPath();
@@ -301,13 +290,11 @@
             ctx.fill();
         }
 
-        // 畫敵人
         for (let e of enemies) {
             ctx.fillStyle = e.color;
             ctx.beginPath();
             ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
             ctx.fill();
-            // 血量條
             if (e.hp > 1) {
                 ctx.fillStyle = 'white';
                 ctx.font = '12px Arial';
@@ -316,7 +303,6 @@
             }
         }
 
-        // 畫粒子
         for (let p of particles) {
             ctx.globalAlpha = p.alpha;
             ctx.fillStyle = p.color;
@@ -335,7 +321,6 @@
         animationId = requestAnimationFrame(gameLoop);
     }
 
-    // --- 輔助功能 ---
     function createParticles(x, y, color) {
         for (let i = 0; i < 5; i++) {
             particles.push({
@@ -363,7 +348,6 @@
         document.getElementById('hud-time').innerText = timeRemaining;
     }
 
-    // --- 遊戲流程控制 ---
     function startGame() {
         document.getElementById('menu-screen').classList.add('hidden');
         document.getElementById('hud').classList.remove('hidden');
@@ -380,6 +364,7 @@
         enemies = [];
         particles = [];
         frameCount = 0;
+        isShooting = false; // 確保新關卡開始時重置射擊狀態
         gameState = 'playing';
         updateHUD();
 
@@ -397,9 +382,10 @@
 
     function levelComplete() {
         gameState = 'level_transition';
+        isShooting = false;
         clearInterval(timerInterval);
         
-        if (currentLevel >= 9) { // 10關完成
+        if (currentLevel >= 9) { 
             gameOver("你破關了！星系得救了！", true);
         } else {
             currentLevel++;
@@ -416,6 +402,7 @@
 
     function gameOver(reason, victory = false) {
         gameState = 'game_over';
+        isShooting = false;
         clearInterval(timerInterval);
         document.getElementById('hud').classList.add('hidden');
         
@@ -433,20 +420,16 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 
-    // --- 排行榜功能 (Local Storage) ---
     function saveScore() {
         const nameInput = document.getElementById('player-name').value.trim();
         const name = nameInput || '無名英雄';
         
-        // 讀取舊紀錄
         let scores = JSON.parse(localStorage.getItem('spaceShooterLeaderboard')) || [];
         scores.push({ name: name, score: totalMoney });
         
-        // 排序並取前10名
         scores.sort((a, b) => b.score - a.score);
         scores = scores.slice(0, 10);
         
-        // 儲存
         localStorage.setItem('spaceShooterLeaderboard', JSON.stringify(scores));
         
         document.getElementById('game-over-screen').classList.add('hidden');
